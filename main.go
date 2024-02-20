@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
@@ -8,8 +9,14 @@ import (
 
 	"github.com/go-chi/chi"
 	"github.com/go-chi/cors"
+	"github.com/impedance/rssagg/internal/database"
 	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
 )
+
+type apiConfig struct {
+	DB *database.Queries
+}
 
 func main() {
 	godotenv.Load()
@@ -18,6 +25,25 @@ func main() {
 
 	if portString == "" {
 		log.Fatal("PORT is not found in the env")
+	}
+
+	dbURL := os.Getenv("DB_URL")
+
+	if dbURL == "" {
+		log.Fatal("not found db url")
+	}
+
+	conn, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		log.Fatal("cant connect to database")
+	}
+
+	if err != nil {
+		log.Fatal("cant create database connection?")
+	}
+
+	apiCfg := apiConfig{
+		DB: database.New(conn),
 	}
 
 	fmt.Println("Port: ", portString)
@@ -33,11 +59,16 @@ func main() {
 		MaxAge:           300,
 	}))
 
-  v1Router := chi.NewRouter()
-  v1Router.Get("/healthz", handlerReadiness)
-  v1Router.Get("/err", handlerErr)
+	v1Router := chi.NewRouter()
+	v1Router.Get("/healthz", handlerReadiness)
+	v1Router.Get("/err", handlerErr)
+	v1Router.Post("/users", apiCfg.handlerCreateUser)
+	v1Router.Get("/users", apiCfg.middlewareAuth(apiCfg.handlerGetUser))
+	v1Router.Post("/feeds", apiCfg.middlewareAuth(apiCfg.handlerCreateFeed))
+	v1Router.Get("/feeds", apiCfg.handlerGetFeeds)
+	v1Router.Post("/feed_follows", apiCfg.middlewareAuth(apiCfg.handlerCreateFeedFollow))
 
-  router.Mount("/v1", v1Router)
+	router.Mount("/v1", v1Router)
 
 	srv := &http.Server{
 		Handler: router,
@@ -46,7 +77,7 @@ func main() {
 
 	log.Printf("Server starting on port %v", portString)
 
-	err := srv.ListenAndServe()
+	err = srv.ListenAndServe()
 	if err != nil {
 		log.Fatal(err)
 	}
